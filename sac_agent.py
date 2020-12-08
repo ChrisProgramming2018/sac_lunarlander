@@ -1,4 +1,5 @@
 import numpy as np
+import sys
 import random
 from collections import namedtuple, deque
 
@@ -76,13 +77,20 @@ class SACAgent():
         # update the q function by mean squard error of 
         # q local s_t, a - target 
         # target r + yEV(s_t+1)  v(s_t) =  Q(s_t,a_t) - alpha (pi(a|s)
+        with torch.no_grad():
+            print(next_states.shape) 
+            mu, next_actions, action_prob, next_log_porbs, logits = self.actor(next_states)
+            print(next_actions.shape)
+            print("log prb", next_log_porbs.shape)
+            q_target = self.qnetwork_local(next_states).gather(1, next_actions.unsqueeze(1))
+            print(q_target)
+            print(q_target.shape)
+            Q_targets_next = rewards + self.gamma * (dones * q_target - self.alpha * next_log_porbs)
         
         Q_expected = self.qnetwork_local(states).gather(1, actions)
-            
-        probs = self.actor(next_states)
+        sys.exit()
 
         # next_actions =  
-        Q_targets_next = self.qnetwork_target(next_states).detach().gather(1, next_actions)
         # Compute Q targets for current states 
         out_put =  self.actor(states).detach()
         action_prob =  out_put.gather(1, actions) + torch.finfo(torch.float32).eps
@@ -107,7 +115,7 @@ class SACAgent():
         self.optimizer.step()
 
         # update actor
-        polciy_loss = alpha * log_prob - Q_expected
+        polciy_loss = (alpha * log_prob - Q_expected.detach()).mean()
         
         # Minimize the loss
         self.optimizer_actor.zero_grad()

@@ -51,9 +51,9 @@ def main(args):
         env_score = 0
         for t in range(args.max_episode_steps):    
             _, action = agent.act(state)
-            print(action)
+            # print(action)
             next_state, reward, done, _ = env.step(action)
-            #agent.step(replay_buffer)
+            agent.step(replay_buffer)
             env_score += reward
             done_bool = 0 if t + 1 == args.max_episode_steps else float(done)
             replay_buffer.add(state, action, reward, next_state, done, done_bool)
@@ -62,6 +62,7 @@ def main(args):
                 print("Episode {}  Reward {} steps {}".format(i_episode, env_score, t))
                 break
         print('\rEpisode {}\tAverage Score: {:.2f} '  .format(i_episode, np.mean(scores_window)), end="")
+        scores_window.append(env_score)
         mean_reward =  np.mean(scores_window)
         writer.add_scalar('env_reward', mean_reward, i_episode)
         if i_episode % 100 == 0:
