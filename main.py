@@ -10,6 +10,9 @@ import json
 import time
 from datetime import datetime
 from collections import namedtuple, deque
+from utils import eval_policy
+
+
 
 def time_format(sec):
     """
@@ -45,6 +48,7 @@ def main(args):
     pathname = dt_string + "_use_double_" + str(agent.ddqn) + "seed_" + str(config['seed'])
     tensorboard_name = 'runs/' + pathname
     writer = SummaryWriter(tensorboard_name)
+    # eval_policy(env, agent, writer, 0, config)
     t0 = time.time()
     for i_episode in range(1, n_episodes+1):
         state = env.reset()
@@ -53,7 +57,7 @@ def main(args):
             _, action = agent.act(state)
             # print(action)
             next_state, reward, done, _ = env.step(action)
-            agent.step(replay_buffer)
+            agent.step(replay_buffer, writer)
             env_score += reward
             done_bool = 0 if t + 1 == args.max_episode_steps else float(done)
             replay_buffer.add(state, action, reward, next_state, done, done_bool)
@@ -61,11 +65,12 @@ def main(args):
             if done:
                 print("Episode {}  Reward {} steps {}".format(i_episode, env_score, t))
                 break
-        print('\rEpisode {}\tAverage Score: {:.2f} '  .format(i_episode, np.mean(scores_window)), end="")
         scores_window.append(env_score)
         mean_reward =  np.mean(scores_window)
         writer.add_scalar('env_reward', mean_reward, i_episode)
+        print('\rEpisode {}\tAverage Score: {:.2f} '  .format(i_episode, np.mean(scores_window)), end="")
         if i_episode % 100 == 0:
+            eval_policy(env, agent, writer, i_episode, config)
             print('\rEpisode {}\tAverage Score: {:.2f} Time: {}'.format(i_episode, np.mean(scores_window),  time_format(time.time()-t0)))
         if np.mean(scores_window)>=200.0:
             print('\nEnvironment solved in {:d} episodes!\tAverage Score: {:.2f}'.format(i_episode-100, np.mean(scores_window)))

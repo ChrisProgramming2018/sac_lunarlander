@@ -56,7 +56,7 @@ class Actor(nn.Module):
         x = F.relu(self.fc1(state))
         x = F.relu(self.fc2(x))
         logits = self.fc3(x)
-        mu = torch.argmax(logits)
+        mu = torch.argmax(logits, dim=1)
         action_prob = self.softmax_layer(logits) 
         action_prob = action_prob + torch.finfo(torch.float32).eps
         log_action_prob = torch.log(action_prob)
