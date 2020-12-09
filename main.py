@@ -33,7 +33,9 @@ def main(args):
     env = gym.make('LunarLander-v2')
     #env = gym.wrappers.Monitor(env, "./vid", video_callable=lambda episode_id: True,force=True)
     env.seed(config['seed'])
-    config["target_entropy"] =  0.98 * (-np.log(1/env.action_space.n))
+    config["target_entropy"] =  np.log(env.action_space.n)
+    print("target entropy ",config["target_entropy"])
+    
     print('State shape: ', env.observation_space.shape)
     print('Number of actions: ', env.action_space.n)
     agent = SACAgent(state_size=8, action_size=4, config=config)
@@ -62,8 +64,8 @@ def main(args):
             done_bool = 0 if t + 1 == args.max_episode_steps else float(done)
             replay_buffer.add(state, action, reward, next_state, done, done_bool)
             state = next_state
-            if done:
-                print("Episode {}  Reward {} steps {}".format(i_episode, env_score, t))
+            if done or t == args.max_episode_steps:
+                print("Episode {}  Reward {:.2f} steps {}".format(i_episode, env_score, t))
                 break
         scores_window.append(env_score)
         mean_reward =  np.mean(scores_window)
@@ -73,7 +75,7 @@ def main(args):
             eval_policy(env, agent, writer, i_episode, config)
             print('\rEpisode {}\tAverage Score: {:.2f} Time: {}'.format(i_episode, np.mean(scores_window),  time_format(time.time()-t0)))
         if np.mean(scores_window)>=200.0:
-            print('\nEnvironment solved in {:d} episodes!\tAverage Score: {:.2f}'.format(i_episode-100, np.mean(scores_window)))
+            print('\nEnvironment solved in {:d} episodes! \tAverage Score: {:.2f}'.format(i_episode-100, np.mean(scores_window)))
             torch.save(agent.qnetwork_local.state_dict(), 'checkpoint.pth')
             break
     return scores
@@ -88,7 +90,7 @@ if __name__ == "__main__":
     parser.add_argument('--fc3_units', default=256, type=int)
     parser.add_argument('--mode', default="dqn", type=str)
     parser.add_argument('--buffer_size', default=1e5, type=int)
-    parser.add_argument('--max_episode_steps', default=1000, type=int) 
+    parser.add_argument('--max_episode_steps', default=200, type=int) 
     arg = parser.parse_args()
     main(arg)
 

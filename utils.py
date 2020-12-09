@@ -48,11 +48,9 @@ def eval_policy(env, agent, writer, steps, config, episodes=2):
     for i in range(episodes):
         env = gym.wrappers.Monitor(env,str(config["locexp"])+"/vid/{}/{}".format(steps, i), video_callable=lambda episode_id: True,force=True)
         env.seed(i)
-        state = env.reset()
         score = 0 
-        t  = 0
-        while True:
-            t += 1
+        state = env.reset()
+        for t in range(["max_episodes_steps"]):
             action, _ = agent.act(state)
             state, reward, done, _ = env.step(action)
             score += reward
