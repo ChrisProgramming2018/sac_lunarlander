@@ -35,14 +35,20 @@ def main(args):
     env.seed(config['seed'])
     config["target_entropy"] =  np.log(env.action_space.n)
     print("target entropy ",config["target_entropy"])
-    
+    if args.mode == "debug":
+        config["batch_size"] = args.batch_size
+
     print('State shape: ', env.observation_space.shape)
     print('Number of actions: ', env.action_space.n)
     agent = SACAgent(state_size=8, action_size=4, config=config)
     replay_buffer = ReplayBuffer((8, ), (1, ), int(args.buffer_size),  config['device'])
     # agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
     n_episodes = 2000
-    scores = []                        # list containing scores from each episode
+    scores = []
+    eps = config["eps_start"]
+    eps_end = config["eps_end"]
+    eps_decay = config["eps_decay"]
+    # list containing scores from each episode
     scores_window = deque(maxlen=100)
     # eps = 1   # random policy
     now = datetime.now()
@@ -50,13 +56,14 @@ def main(args):
     pathname = dt_string + "_use_double_" + str(agent.ddqn) + "seed_" + str(config['seed'])
     tensorboard_name = 'runs/' + pathname
     writer = SummaryWriter(tensorboard_name)
-    # eval_policy(env, agent, writer, 0, config)
+    #eval_policy(env, agent, writer, 0, config)
     t0 = time.time()
     for i_episode in range(1, n_episodes+1):
         state = env.reset()
         env_score = 0
         for t in range(args.max_episode_steps):    
             _, action = agent.act(state)
+            # action = agent.act_eps(state, eps)
             # print(action)
             next_state, reward, done, _ = env.step(action)
             agent.step(replay_buffer, writer)
@@ -64,16 +71,15 @@ def main(args):
             done_bool = 0 if t + 1 == args.max_episode_steps else float(done)
             replay_buffer.add(state, action, reward, next_state, done, done_bool)
             state = next_state
-            if done or t == args.max_episode_steps:
-                print("Episode {}  Reward {:.2f} steps {}".format(i_episode, env_score, t))
+            if done:
                 break
+        eps = max(eps_end, eps_decay*eps) # decrease epsilon
         scores_window.append(env_score)
         mean_reward =  np.mean(scores_window)
         writer.add_scalar('env_reward', mean_reward, i_episode)
-        print('\rEpisode {}\tAverage Score: {:.2f} '  .format(i_episode, np.mean(scores_window)), end="")
-        if i_episode % 100 == 0:
+        print('\rEpisode {}\tAverage Score: {:.2f} Time: {}'.format(i_episode, np.mean(scores_window),  time_format(time.time()-t0)))
+        if i_episode % 1000 == 0:
             eval_policy(env, agent, writer, i_episode, config)
-            print('\rEpisode {}\tAverage Score: {:.2f} Time: {}'.format(i_episode, np.mean(scores_window),  time_format(time.time()-t0)))
         if np.mean(scores_window)>=200.0:
             print('\nEnvironment solved in {:d} episodes! \tAverage Score: {:.2f}'.format(i_episode-100, np.mean(scores_window)))
             torch.save(agent.qnetwork_local.state_dict(), 'checkpoint.pth')
@@ -90,7 +96,7 @@ if __name__ == "__main__":
     parser.add_argument('--fc3_units', default=256, type=int)
     parser.add_argument('--mode', default="dqn", type=str)
     parser.add_argument('--buffer_size', default=1e5, type=int)
-    parser.add_argument('--max_episode_steps', default=200, type=int) 
+    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--max_episode_steps', default=1000, type=int) 
     arg = parser.parse_args()
     main(arg)
-

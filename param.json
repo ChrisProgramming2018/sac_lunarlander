@@ -1,7 +1,7 @@
 {
   "env_name": "LunarLander-v2",
   "locexp": "search_results",
-  "lr": 1e-4,
+  "lr": 5e-4,
   "lr_alpha": 1e-4,
   "max_episodes_steps": 200,
   "tau": 1e-3,
@@ -17,6 +17,9 @@
   "fc1_units": 64,
   "fc2_units": 64,
   "batch_size": 32,
+  "eps_start": 1,
+  "eps_end": 0.01,
+  "eps_decay": 0.995,
   "clip": -10,
   "target_entropy": 1.6,
   "update_freq": 1,

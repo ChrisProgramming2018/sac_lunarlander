@@ -43,13 +43,13 @@ class SACAgent():
         self.qnetwork_target = QNetwork(state_size, action_size, self.seed).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
         self.log_alpha = torch.zeros((1,), requires_grad=True, device=config["device"])
-        self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=config["lr_alpha"])
+        self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=5e-3)
         self.t_step = 0
         self.update_freq = config["update_freq"]
     
     def step(self, memory, writer):
         self.t_step += 1 
-        if self.t_step % self.update_freq == 0:
+        if self.t_step > 1000:
             if len(memory) > self.batch_size:
                 states, actions, rewards, next_states, dones = memory.sample(self.batch_size)
                 self.update_q(states, actions, rewards, next_states, dones, writer)
@@ -76,12 +76,11 @@ class SACAgent():
             experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples 
             gamma (float): discount factor
         """
-        alpha = torch.exp(self.log_alpha) * 0
+        alpha = torch.exp(self.log_alpha)
         # update the q function by mean squard error of 
         # q local s_t, a - target 
         # target r + yEV(s_t+1)  v(s_t) = pi(st)  Q(s_t,a_t) - alpha log(pi(a|s)
         with torch.no_grad():
-            #print(next_states.shape) 
             mu, next_actions, action_prob_next, next_log_probs, logits = self.actor(next_states)
             #print(mu)
             #print(mu.shape)
@@ -90,37 +89,55 @@ class SACAgent():
             next_log_probs = next_log_probs.gather(1, mu.unsqueeze(1))
             #print("log prb", next_log_probs.shape)
             #print("log prb", next_log_probs)
+            
             q_target_1, q_target_2 = self.qnetwork_target(next_states)
             q_target_1 = q_target_1.gather(1, actions)
             q_target_2 = q_target_2.gather(1, actions)
             
             q_target_min = torch.min(q_target_1, q_target_2)
-            #print(q_target)
-            #print("q_target", q_target.shape)
-            #print("next_log_probs", next_log_probs.shape)
-            #print(q_target.shape)
-            Q_targets = rewards + self.gamma * dones * (torch.sum(action_prob_next* alpha * next_log_probs - q_target_min))
-            # print(Q_targets)
+            
+            # print(q_target)
+            # print("q_target", q_target_min.shape)
+            # print("next_log_probs", next_log_probs.shape)
+            writer.add_scalar('Alpha', alpha, self.t_step)
+            # Compute Q targets for current states 
+            
+            target = torch.sum(action_prob_next * (q_target_min - alpha * next_log_probs), dim=1).unsqueeze(1)
+            
+            #sys.exit()
+            Q_targets = rewards + ( self.gamma * dones * target)
+            #print("Q_targets ", Q_targets.shape)
 
-        Q_expected_1, Q_expected_2 = self.qnetwork_local(states)
-        Q_expected_1 = Q_expected_1.gather(1, actions)
-        Q_expected_2 = Q_expected_2.gather(1, actions)
+        Q_expected_logits_1, Q_expected_logits_2 = self.qnetwork_local(states)
+        Q_expected_1 = Q_expected_logits_1.gather(1, actions)
+        Q_expected_2 = Q_expected_logits_1.gather(1, actions)
         Q_expected_min = torch.min(Q_expected_1, Q_expected_2)
+        Q_expected_logits_min = torch.min(Q_expected_logits_1, Q_expected_logits_2)
+        #print(Q_expected_1.shape)
         
         # Compute loss
         loss = F.mse_loss(Q_expected_1, Q_targets.detach()) + F.mse_loss(Q_expected_2, Q_targets.detach())
         writer.add_scalar('Q_loss', loss, self.t_step)
-        # Minimize the loss
-        
+
+
+        # ------------------------------update-alpha---------------------------------------
+
         mu, pi, action_prob, log_action_prob, logits = self.actor(states.detach())
         pi_entropy = action_prob.detach() * log_action_prob.detach()
         #print(action_prob)
         #print("log", log_action_prob)
-        pi_entropy  = -pi_entropy.sum(dim=-1, keepdim=True)
-        # print(pi_entropy)
+        #print("tensor pi", pi_entropy)
+        pi_entropy  = -pi_entropy.sum(dim=(1))
+        #print(pi_entropy)
         # print("alph ", self.log_alpha)
-        alpha_backup =  (self.target_entropy - pi_entropy).detach().mean()
-        alpha_loss =  -self.log_alpha  * alpha_backup
+        alpha_backup =  self.target_entropy - pi_entropy
+        if self.t_step % 500 == 0:
+            print(alpha_backup)
+            print(self.log_alpha) 
+            print(self.target_entropy) 
+            print("Q", loss)
+        alpha_loss = -(self.log_alpha  * alpha_backup).mean()
+        #print("alpha loss ", alpha_loss)
         
         # print("loss", alpha_loss)
         # print("Alpha  {}  Alpha target {:.2f} ".format(alpha[0], self.target_entropy))
@@ -128,11 +145,20 @@ class SACAgent():
         writer.add_scalar('A_loss', alpha_loss, self.t_step)
         
         
+        # ------------------------------update-policy---------------------------------------
+        #print(alpha)
+        #print(log_action_prob)
+        pi_backup = action_prob * (alpha * log_action_prob - Q_expected_logits_min.detach())
+        #print("poback", pi_backup)
+        pi_backup = torch.sum(pi_backup, dim= 1)
+        #print("poback", pi_backup)
+        #print("poback", pi_backup.shape)
+        
+        policy_loss = pi_backup.mean()
+        #print("pol los", policy_loss)
 
-        # update actor -----------------------------------------------------------------------------------
-        polciy_loss = (action_prob * (alpha.detach() * log_action_prob - Q_expected_min.detach())).mean()
-        #print("pol los", polciy_loss)
-        writer.add_scalar('P_loss', polciy_loss, self.t_step)
+        #sys.exit()
+        writer.add_scalar('P_loss', policy_loss, self.t_step)
         
         
         
@@ -141,17 +167,14 @@ class SACAgent():
         loss.backward()
         self.optimizer.step()
 
-
         # Minimize the alpha loss 
         self.alpha_optimizer.zero_grad()
         alpha_loss.backward()
         self.alpha_optimizer.step()
 
-
-
         # Minimize the policy loss
         self.optimizer_actor.zero_grad()
-        polciy_loss.backward()
+        policy_loss.backward()
         self.optimizer_actor.step()
 
         # ------------------- update target network ------------------- #
@@ -168,3 +191,27 @@ class SACAgent():
         """
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
             target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
+
+
+
+    def act_eps(self, state, eps=0.):
+        """Returns actions for given state as per current policy.
+
+        Params
+        ======
+            state (array_like): current state
+            eps (float): epsilon, for epsilon-greedy action selection
+        """
+        state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
+        state = state.type(torch.float32)
+        self.qnetwork_local.eval()
+        with torch.no_grad():
+            action_values, action_values2 = self.qnetwork_local(state)
+        self.qnetwork_local.train()
+
+        # Epsilon-greedy action selection
+        if random.random() > eps:
+            return np.argmax(action_values.cpu().data.numpy())
+        else:
+            return random.choice(np.arange(self.action_size))
+

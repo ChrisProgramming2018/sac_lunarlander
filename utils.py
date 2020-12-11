@@ -41,7 +41,7 @@ def write_into_file(pathname, text):
         myfile.write('\n')
 
 
-def eval_policy(env, agent, writer, steps, config, episodes=2):
+def eval_policy(env, agent, writer, steps, config, episodes=3):
     average_score = 0
     average_steps = 0
     print("Eval Policy")
@@ -50,8 +50,10 @@ def eval_policy(env, agent, writer, steps, config, episodes=2):
         env.seed(i)
         score = 0 
         state = env.reset()
-        for t in range(["max_episodes_steps"]):
-            action, _ = agent.act(state)
+        t = 0
+        while True:
+            t += 1
+            action = agent.act_eps(state)
             state, reward, done, _ = env.step(action)
             score += reward
             if done:
