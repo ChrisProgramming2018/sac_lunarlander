@@ -43,14 +43,14 @@ class SACAgent():
         self.qnetwork_target = QNetwork(state_size, action_size, self.seed).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
         self.log_alpha = torch.zeros((1,), requires_grad=True, device=config["device"])
-        self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=5e-3)
+        self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=self.lr)
         self.t_step = 0
         self.update_freq = config["update_freq"]
     
     def step(self, memory, writer):
         self.t_step += 1 
-        if self.t_step > 1000:
-            if len(memory) > self.batch_size:
+        if self.t_step > 100:
+            if self.t_step % self.update_freq == 0:
                 states, actions, rewards, next_states, dones = memory.sample(self.batch_size)
                 self.update_q(states, actions, rewards, next_states, dones, writer)
 
@@ -131,7 +131,7 @@ class SACAgent():
         #print(pi_entropy)
         # print("alph ", self.log_alpha)
         alpha_backup =  self.target_entropy - pi_entropy
-        if self.t_step % 500 == 0:
+        if self.t_step % 500 == 0 and False:
             print(alpha_backup)
             print(self.log_alpha) 
             print(self.target_entropy) 
@@ -178,6 +178,8 @@ class SACAgent():
         self.optimizer_actor.step()
 
         # ------------------- update target network ------------------- #
+        #if self.t_step % 8000 == 0:
+        #self.hard_update(self.qnetwork_local, self.qnetwork_target)                     
         self.soft_update(self.qnetwork_local, self.qnetwork_target, self.tau)                     
 
     def soft_update(self, local_model, target_model, tau):
@@ -191,6 +193,18 @@ class SACAgent():
         """
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
             target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
+    
+    def hard_update(self, local_model, target_model):
+        """Soft update model parameters.
+        θ_target = τ*θ_local + (1 - τ)*θ_target
+        Params
+        ======
+            local_model (PyTorch model): weights will be copied from
+            target_model (PyTorch model): weights will be copied to
+            tau (float): interpolation parameter 
+        """
+        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+            target_param.data.copy_(local_param.data)
 
 
 
