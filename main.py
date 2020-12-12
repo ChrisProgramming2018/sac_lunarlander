@@ -10,7 +10,7 @@ import json
 import time
 from datetime import datetime
 from collections import namedtuple, deque
-from utils import eval_policy
+from utils import eval_policy, mkdir, write_into_file
 
 
 
@@ -45,17 +45,16 @@ def main(args):
     # agent.qnetwork_local.load_state_dict(torch.load('checkpoint.pth'))
     n_episodes = 2000
     scores = []
-    eps = config["eps_start"]
-    eps_end = config["eps_end"]
-    eps_decay = config["eps_decay"]
     # list containing scores from each episode
     scores_window = deque(maxlen=100)
     # eps = 1   # random policy
     now = datetime.now()
     dt_string = now.strftime("%d_%m_%Y_%H:%M:%S")
-    pathname = dt_string + "_use_double_" + str(agent.ddqn) + "seed_" + str(config['seed'])
-    tensorboard_name = 'runs/' + pathname
+    pathname = dt_string + "seed_" + str(config['seed'])
+    tensorboard_name = "result_"+ str(config["runs"]) +  'runs/' + pathname
     writer = SummaryWriter(tensorboard_name)
+    best_reward = - 300
+    best_step = 0
     #eval_policy(env, agent, writer, 0, config)
     t0 = time.time()
     for i_episode in range(1, n_episodes+1):
@@ -63,8 +62,6 @@ def main(args):
         env_score = 0
         for t in range(args.max_episode_steps):    
             _, action = agent.act(state)
-            # action = agent.act_eps(state, eps)
-            # print(action)
             next_state, reward, done, _ = env.step(action)
             agent.step(replay_buffer, writer)
             env_score += reward
@@ -73,7 +70,9 @@ def main(args):
             state = next_state
             if done:
                 break
-        eps = max(eps_end, eps_decay*eps) # decrease epsilon
+        if env_score > best_reward:
+            best_reward = env_score
+            best_step = i_episode
         scores_window.append(env_score)
         mean_reward =  np.mean(scores_window)
         writer.add_scalar('env_reward', mean_reward, i_episode)
@@ -84,7 +83,12 @@ def main(args):
             print('\nEnvironment solved in {:d} episodes! \tAverage Score: {:.2f}'.format(i_episode-100, np.mean(scores_window)))
             torch.save(agent.qnetwork_local.state_dict(), 'checkpoint.pth')
             break
-    return scores
+    
+    print("done training write in file")
+    text = "Run {}  best r {} at {} ".format(config['run'], best_reward , best_step)
+    filepath = "results"
+    mkdir("", filepath)
+    write_into_file(filepath, text)
 
 
 if __name__ == "__main__":
@@ -93,7 +97,6 @@ if __name__ == "__main__":
     parser.add_argument('--lr', default=5e-4, type=float)
     parser.add_argument('--fc1_units', default=256, type=int)
     parser.add_argument('--fc2_units', default=256, type=int)
-    parser.add_argument('--fc3_units', default=256, type=int)
     parser.add_argument('--mode', default="dqn", type=str)
     parser.add_argument('--buffer_size', default=1e5, type=int)
     parser.add_argument('--batch_size', default=32, type=int)
