@@ -34,6 +34,7 @@ def main(args):
     #env = gym.wrappers.Monitor(env, "./vid", video_callable=lambda episode_id: True,force=True)
     env.seed(config['seed'])
     config["target_entropy"] =  np.log(env.action_space.n)
+    config["runs"] =  args.runs
     print("target entropy ",config["target_entropy"])
     if args.mode == "debug":
         config["batch_size"] = args.batch_size
@@ -101,5 +102,6 @@ if __name__ == "__main__":
     parser.add_argument('--buffer_size', default=1e5, type=int)
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--max_episode_steps', default=1000, type=int) 
+    parser.add_argument('--runs', default=1, type=int) 
     arg = parser.parse_args()
     main(arg)
