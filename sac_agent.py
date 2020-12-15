@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
+from utils import GumbelSoftmax
 
 
 class SACAgent():
@@ -148,6 +149,31 @@ class SACAgent():
         # ------------------------------update-policy---------------------------------------
         #print(alpha)
         #print(log_action_prob)
+        mu, pi, action_prob, log_action_prob, logits = self.actor(states)
+        #print(logits)
+        #print(logits.shape)
+        pdparam = logits 
+        pd_kwargs = {'temperature': torch.tensor(1.0)}
+        action_pd = GumbelSoftmax(logits=pdparam, **pd_kwargs)
+        reparam_actions = action_pd.rsample()
+        log_probs = action_pd.log_prob(reparam_actions)
+        #print(reparam_actions)
+        #print(log_probs)
+        reparam_actions = torch.argmax(reparam_actions, dim=1).unsqueeze(1)
+        #print(reparam_actions)
+        #print(reparam_actions.shape)
+
+        q1_preds = Q_expected_logits_1.gather(1, reparam_actions)
+        q2_preds = Q_expected_logits_2.gather(1, reparam_actions) 
+        q_preds = torch.min(q1_preds, q2_preds)
+        
+        policy_loss = (self.log_alpha * log_probs - q_preds.detach()).mean()
+        #print(policy_loss)
+        #sys.exit()
+        
+        
+        """
+        old code
         pi_backup = action_prob * (alpha * log_action_prob - Q_expected_logits_min.detach())
         #print("poback", pi_backup)
         pi_backup = torch.sum(pi_backup, dim= 1)
@@ -156,7 +182,7 @@ class SACAgent():
         
         policy_loss = pi_backup.mean()
         #print("pol los", policy_loss)
-
+        """
         #sys.exit()
         writer.add_scalar('P_loss', policy_loss, self.t_step)
         
