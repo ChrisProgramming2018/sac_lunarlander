@@ -52,7 +52,7 @@ def main(args):
     now = datetime.now()
     dt_string = now.strftime("%d_%m_%Y_%H:%M:%S")
     pathname = dt_string + "seed_" + str(config['seed'])
-    tensorboard_name = "result_"+ str(config["runs"]) +  'runs/' + pathname
+    tensorboard_name = "results_"+ str(config["runs"]) +  '/runs/' + pathname
     writer = SummaryWriter(tensorboard_name)
     best_reward = - 300
     best_step = 0
@@ -62,7 +62,7 @@ def main(args):
         state = env.reset()
         env_score = 0
         for t in range(args.max_episode_steps):    
-            _, action = agent.act(state)
+            action = agent.act(state)
             next_state, reward, done, _ = env.step(action)
             agent.step(replay_buffer, writer)
             env_score += reward
@@ -77,7 +77,7 @@ def main(args):
         scores_window.append(env_score)
         mean_reward =  np.mean(scores_window)
         writer.add_scalar('env_reward', mean_reward, i_episode)
-        print('\rEpisode {}\tAverage Score: {:.2f} Time: {}'.format(i_episode, np.mean(scores_window),  time_format(time.time()-t0)))
+        print('\rEpisode {}\tAverage Score: {:.2f} steps {} Time: {}'.format(i_episode, np.mean(scores_window), t, time_format(time.time()-t0)))
         if i_episode % 1000 == 0:
             eval_policy(env, agent, writer, i_episode, config)
         if np.mean(scores_window)>=200.0:

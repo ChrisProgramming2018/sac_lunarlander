@@ -8,9 +8,8 @@ from model import QNetwork, Actor
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-
 from utils import GumbelSoftmax
-
+from gym import wrappers
 
 class SACAgent():
     """Interacts with and learns from the environment."""
@@ -32,12 +31,10 @@ class SACAgent():
         self.device = config['device']
         self.gamma = config['gamma']
         self.tau = config['tau']
-        self.ddqn = config['DDQN']
         print("seed", self.seed)
         # Q-Network
         self.target_entropy = config["target_entropy"]
         self.target_entropy = 0.416
-        
         self.actor = Actor(state_size, action_size, self.seed, config["clip"]).to(self.device)
         self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=self.lr)
         self.qnetwork_local = QNetwork(state_size, action_size, self.seed).to(self.device)
@@ -45,16 +42,31 @@ class SACAgent():
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.lr)
         self.log_alpha = torch.zeros((1,), requires_grad=True, device=config["device"])
         self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=self.lr)
+        self.alpha = self.log_alpha.detach().exp()
+        #self.alpha = 0.2
         self.t_step = 0
         self.update_freq = config["update_freq"]
+        self.vid_path = config["locexp"] + "/vid"
+        self.action_pd = GumbelSoftmax
     
     def step(self, memory, writer):
         self.t_step += 1 
         if self.t_step > 100:
             if self.t_step % self.update_freq == 0:
-                states, actions, rewards, next_states, dones = memory.sample(self.batch_size)
-                self.update_q(states, actions, rewards, next_states, dones, writer)
+                self.learn(memory, writer)
+    def act_dqn(self, state, eps=0):
+        state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
+        self.qnetwork_local.eval()
+        with torch.no_grad():
+            action_values = self.qnetwork_local.Q1(state)
+        self.qnetwork_local.train()
 
+        # Epsilon-greedy action selection
+        if random.random() > eps:
+            return np.argmax(action_values.cpu().data.numpy())
+        else:
+            return random.choice(np.arange(self.action_size))
+    
     def act(self, state):
         """Returns actions for given state as per current policy.
         
@@ -66,147 +78,105 @@ class SACAgent():
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
         self.actor.eval()
         with torch.no_grad():
-            mu, pi, action_prob, log_action_prob, logits = self.actor(state)
+            logits = self.actor(state)
         self.actor.train()
-        return mu.item(), pi.item()
+        action_pd = self.get_policy(logits)
+        log_probs, action = self.calc_log_prob_action(action_pd)
+        #print(next_actions)
+        return action.item()
+    def guard_actions(self, actions):
+        actions = F.one_hot(actions.long(), self.action_size).float()
+        return actions
     
-    def update_q(self, states, actions, rewards, next_states, dones, writer):
-        """Update value parameters using given batch of experience tuples.
-        Params
-        ======
-            experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples 
-            gamma (float): discount factor
-        """
-        alpha = torch.exp(self.log_alpha)
-        # update the q function by mean squard error of 
-        # q local s_t, a - target 
-        # target r + yEV(s_t+1)  v(s_t) = pi(st)  Q(s_t,a_t) - alpha log(pi(a|s)
+    def learn(self, memory, writer):
+        states, actions, rewards, next_states, dones = memory.sample(self.batch_size)
         with torch.no_grad():
-            mu, next_actions, action_prob_next, next_log_probs, logits = self.actor(next_states)
-            #print(mu)
-            #print(mu.shape)
-            #sys.exit() 
-            #next_log_probs = next_log_probs.gather(1, next_actions.unsqueeze(1))
-            next_log_probs = next_log_probs.gather(1, mu.unsqueeze(1))
-            #print("log prb", next_log_probs.shape)
-            #print("log prb", next_log_probs)
+            logits_next = self.actor(next_states)
+            #print(logits_next.shape)
+            action_pd = self.get_policy(logits_next)
+            log_probs_next, next_actions = self.calc_log_prob_action(action_pd)
+            #print("next_actions")
+            #print(next_actions)
+            next_actions = self.guard_actions(next_actions)
+            #print(next_actions.shape)
+            qn1, qn2 = self.qnetwork_target(next_states, next_actions)
+            #print(q_values_next)
+            #print(q_values_next.shape)
+            Q_targets = torch.min(qn1, qn2)
             
-            q_target_1, q_target_2 = self.qnetwork_target(next_states)
-            q_target_1 = q_target_1.gather(1, actions)
-            q_target_2 = q_target_2.gather(1, actions)
+            #print(log_probs_next.shape)
+            #print("action prob ", action_prob_next)
+            #print(log_probs_next)
+            # print(Q_targets)
+            #print("action prob log ", log_probs_next.shape)
+            #print(Q_targets.shape)
+            # Q_targets = (( Q_targets - self.alpha * log_probs_next.unsqueeze(1))).sum(dim=1, keepdim=True)
+            Q_targets = (Q_targets - self.alpha * log_probs_next.unsqueeze(1))
+            #print(Q_targets)
+            #print(Q_targets.shape)
+            #print(dones)
+            Q_targets_next = rewards + (self.gamma * Q_targets * dones)
+            #print(Q_targets)
+            #print(Q_targets_next.shape)
             
-            q_target_min = torch.min(q_target_1, q_target_2)
-            
-            # print(q_target)
-            # print("q_target", q_target_min.shape)
-            # print("next_log_probs", next_log_probs.shape)
-            writer.add_scalar('Alpha', alpha, self.t_step)
-            # Compute Q targets for current states 
-            
-            target = torch.sum(action_prob_next * (q_target_min - alpha * next_log_probs), dim=1).unsqueeze(1)
-            
-            #sys.exit()
-            Q_targets = rewards + ( self.gamma * dones * target)
-            #print("Q_targets ", Q_targets.shape)
-
-        Q_expected_logits_1, Q_expected_logits_2 = self.qnetwork_local(states)
-        Q_expected_1 = Q_expected_logits_1.gather(1, actions)
-        Q_expected_2 = Q_expected_logits_1.gather(1, actions)
-        Q_expected_min = torch.min(Q_expected_1, Q_expected_2)
-        Q_expected_logits_min = torch.min(Q_expected_logits_1, Q_expected_logits_2)
-        #print(Q_expected_1.shape)
-        
-        # Compute loss
-        loss = F.mse_loss(Q_expected_1, Q_targets.detach()) + F.mse_loss(Q_expected_2, Q_targets.detach())
-        writer.add_scalar('Q_loss', loss, self.t_step)
-
-
-        # ------------------------------update-alpha---------------------------------------
-
-        mu, pi, action_prob, log_action_prob, logits = self.actor(states.detach())
-        pi_entropy = action_prob.detach() * log_action_prob.detach()
-        #print(action_prob)
-        #print("log", log_action_prob)
-        #print("tensor pi", pi_entropy)
-        pi_entropy  = -pi_entropy.sum(dim=(1))
-        #print(pi_entropy)
-        # print("alph ", self.log_alpha)
-        alpha_backup =  self.target_entropy - pi_entropy
-        if self.t_step % 500 == 0 and False:
-            print(alpha_backup)
-            print(self.log_alpha) 
-            print(self.target_entropy) 
-            print("Q", loss)
-        alpha_loss = -(self.log_alpha  * alpha_backup).mean()
-        #print("alpha loss ", alpha_loss)
-        
-        # print("loss", alpha_loss)
-        # print("Alpha  {}  Alpha target {:.2f} ".format(alpha[0], self.target_entropy))
-        #print("alpha", alpha)
-        writer.add_scalar('A_loss', alpha_loss, self.t_step)
-        
-        
-        # ------------------------------update-policy---------------------------------------
-        #print(alpha)
-        #print(log_action_prob)
-        mu, pi, action_prob, log_action_prob, logits = self.actor(states)
-        #print(logits)
-        #print(logits.shape)
-        pdparam = logits 
-        pd_kwargs = {'temperature': torch.tensor(1.0)}
-        action_pd = GumbelSoftmax(logits=pdparam, **pd_kwargs)
-        reparam_actions = action_pd.rsample()
-        log_probs = action_pd.log_prob(reparam_actions)
-        #print(reparam_actions)
-        #print(log_probs)
-        reparam_actions = torch.argmax(reparam_actions, dim=1).unsqueeze(1)
-        #print(reparam_actions)
-        #print(reparam_actions.shape)
-
-        q1_preds = Q_expected_logits_1.gather(1, reparam_actions)
-        q2_preds = Q_expected_logits_2.gather(1, reparam_actions) 
-        q_preds = torch.min(q1_preds, q2_preds)
-        
-        policy_loss = (self.log_alpha * log_probs - q_preds.detach()).mean()
-        #print(policy_loss)
-        #sys.exit()
-        
-        
-        """
-        old code
-        pi_backup = action_prob * (alpha * log_action_prob - Q_expected_logits_min.detach())
-        #print("poback", pi_backup)
-        pi_backup = torch.sum(pi_backup, dim= 1)
-        #print("poback", pi_backup)
-        #print("poback", pi_backup.shape)
-        
-        policy_loss = pi_backup.mean()
-        #print("pol los", policy_loss)
-        """
-        #sys.exit()
-        writer.add_scalar('P_loss', policy_loss, self.t_step)
-        
-        
-        
-        # Minimize the critic loss
+            #------------------------- dqn ------------------------------------------------------
+            """
+            Q_targets_next1, Q_targets_next2 = self.qnetwork_target(next_states)
+            Q_targets1 = Q_targets_next1.max(1)[0].unsqueeze(1).detach()
+            Q_targets2 = Q_targets_next2.max(1)[0].unsqueeze(1).detach()
+            Q_targets = torch.min(Q_targets1, Q_targets2)
+            Q_targets_next = rewards + (self.gamma * Q_targets * dones)
+           """
+        actions = self.guard_actions(actions.squeeze(1))
+        pred_q1, pred_q2 = self.qnetwork_local(states, actions)
+        #print("a", actions.shape)
+        q_loss = F.mse_loss(Q_targets_next, pred_q1) +  F.mse_loss(Q_targets_next, pred_q2) 
+        # -----------------------update-q-network------------------------------------------------------------
         self.optimizer.zero_grad()
-        loss.backward()
+        q_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 0.5)
         self.optimizer.step()
-
-        # Minimize the alpha loss 
-        self.alpha_optimizer.zero_grad()
-        alpha_loss.backward()
-        self.alpha_optimizer.step()
-
-        # Minimize the policy loss
+        writer.add_scalar('loss/critic', q_loss, self.t_step)
+        
+        # -----------------------policy-loss------------------------------------------------------------
+        
+        logits = self.actor(states) 
+        action_pd = self.get_policy(logits)
+        log_probs, reparam_actions = self.calc_log_prob_action(action_pd, True)
+        #print(prob_reparam_actions)
+        #print(prob_reparam_actions.shape)
+        pred_q1, pred_q2 = self.qnetwork_local(states, reparam_actions)
+        q_pred = torch.min(pred_q1, pred_q2)
+        #entropy = -torch.sum(prob_reparam_actions * log_probs, dim=1, keepdim=True)
+        policy_loss = (self.alpha * log_probs - q_pred).mean()
         self.optimizer_actor.zero_grad()
         policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
+        writer.add_scalar('loss/policy', policy_loss, self.t_step)
         self.optimizer_actor.step()
+         
+        # -----------------------entropy-loss------------------------------------------------------------
+        entropy_loss = -torch.mean(self.log_alpha * (log_probs.detach() + self.target_entropy))
+        self.alpha_optimizer.zero_grad()
+        entropy_loss.backward()
+        writer.add_scalar('loss/alpha', entropy_loss, self.t_step)
+        self.alpha_optimizer.step()
+        self.alpha = self.log_alpha.exp()
+        writer.add_scalar('alpha', self.alpha, self.t_step)
+        self.soft_update(self.qnetwork_local, self.qnetwork_target, self.tau)
 
-        # ------------------- update target network ------------------- #
-        #if self.t_step % 8000 == 0:
-        #self.hard_update(self.qnetwork_local, self.qnetwork_target)                     
-        self.soft_update(self.qnetwork_local, self.qnetwork_target, self.tau)                     
+                
+
+    def get_policy(self, pdparam):
+        pd_kwargs = {'temperature': torch.tensor(1.0)}
+        action_pd = self.action_pd(logits=pdparam, **pd_kwargs)
+        return action_pd
+
+    def calc_log_prob_action(self, action_pd, reparam=False):
+        '''Calculate log_probs and actions with option to reparametrize from paper eq. 11'''
+        actions = action_pd.rsample() if reparam else action_pd.sample()
+        log_probs = action_pd.log_prob(actions)
+        return log_probs, actions
 
     def soft_update(self, local_model, target_model, tau):
         """Soft update model parameters.
@@ -218,40 +188,23 @@ class SACAgent():
             tau (float): interpolation parameter 
         """
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
-            target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
+            target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)    
     
-    def hard_update(self, local_model, target_model):
-        """Soft update model parameters.
-        θ_target = τ*θ_local + (1 - τ)*θ_target
-        Params
-        ======
-            local_model (PyTorch model): weights will be copied from
-            target_model (PyTorch model): weights will be copied to
-            tau (float): interpolation parameter 
-        """
-        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
-            target_param.data.copy_(local_param.data)
-
-
-
-    def act_eps(self, state, eps=0.):
-        """Returns actions for given state as per current policy.
-
-        Params
-        ======
-            state (array_like): current state
-            eps (float): epsilon, for epsilon-greedy action selection
-        """
-        state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
-        state = state.type(torch.float32)
-        self.qnetwork_local.eval()
-        with torch.no_grad():
-            action_values, action_values2 = self.qnetwork_local(state)
-        self.qnetwork_local.train()
-
-        # Epsilon-greedy action selection
-        if random.random() > eps:
-            return np.argmax(action_values.cpu().data.numpy())
-        else:
-            return random.choice(np.arange(self.action_size))
+    def eval_policy(self, env, writer, eval_episodes=4):
+        env  = wrappers.Monitor(env, str(self.vid_path) + "/{}".format(self.t_step), video_callable=lambda episode_id: True,force=True)
+        average_reward = 0
+        scores_window = deque(maxlen=eval_episodes)
+        for i_epiosde in range(eval_episodes):
+            print("Eval Episode {} of {} ".format(i_epiosde, eval_episodes))
+            episode_reward = 0
+            state = env.reset()
+            while True:
+                action = self.act(state)
+                state, reward, done, _ = env.step(action)
+                episode_reward += reward
+                if done:
+                    break
+            scores_window.append(episode_reward)
+        average_reward = np.mean(scores_window)
+        writer.add_scalar('Eval_reward', average_reward, self.t_step)
 
