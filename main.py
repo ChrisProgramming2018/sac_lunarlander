@@ -56,13 +56,16 @@ def main(args):
     writer = SummaryWriter(tensorboard_name)
     best_reward = - 300
     best_step = 0
+    eps = 1.0
+    eps_end = 0.01
+    eps_decay = 0.997
     #eval_policy(env, agent, writer, 0, config)
     t0 = time.time()
     for i_episode in range(1, n_episodes+1):
         state = env.reset()
         env_score = 0
         for t in range(args.max_episode_steps):    
-            action = agent.act(state)
+            action = agent.act(state, eps)
             next_state, reward, done, _ = env.step(action)
             agent.step(replay_buffer, writer)
             env_score += reward
@@ -74,10 +77,11 @@ def main(args):
         if env_score > best_reward:
             best_reward = env_score
             best_step = i_episode
+        eps = max(eps_end, eps_decay*eps) # decrease epsilon
         scores_window.append(env_score)
         mean_reward =  np.mean(scores_window)
         writer.add_scalar('env_reward', mean_reward, i_episode)
-        print('\rEpisode {}\tAverage Score: {:.2f} steps {} Time: {}'.format(i_episode, np.mean(scores_window), t, time_format(time.time()-t0)))
+        print('\rEpisode {} score {} Average Score: {:.2f} steps {} eps {:.2f} Time: {}'.format(i_episode, env_score,  np.mean(scores_window), t, eps, time_format(time.time()-t0)))
         if i_episode % 1000 == 0:
             eval_policy(env, agent, writer, i_episode, config)
         if np.mean(scores_window)>=200.0:
@@ -96,8 +100,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--param', default="param.json", type=str)
     parser.add_argument('--lr', default=5e-4, type=float)
-    parser.add_argument('--fc1_units', default=256, type=int)
-    parser.add_argument('--fc2_units', default=256, type=int)
+    parser.add_argument('--fc1_units', default=64, type=int)
+    parser.add_argument('--fc2_units', default=64, type=int)
     parser.add_argument('--mode', default="dqn", type=str)
     parser.add_argument('--buffer_size', default=1e5, type=int)
     parser.add_argument('--batch_size', default=32, type=int)

@@ -89,7 +89,7 @@ def eval_policy(env, agent, writer, steps, config, episodes=3):
         t = 0
         while True:
             t += 1
-            action = agent.act_eps(state)
+            action = agent.act(state, 0)
             state, reward, done, _ = env.step(action)
             score += reward
             if done:

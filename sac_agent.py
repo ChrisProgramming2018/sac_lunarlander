@@ -34,7 +34,7 @@ class SACAgent():
         print("seed", self.seed)
         # Q-Network
         self.target_entropy = config["target_entropy"]
-        self.target_entropy = 0.416
+        self.target_entropy = 1.358
         self.actor = Actor(state_size, action_size, self.seed, config["clip"]).to(self.device)
         self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=self.lr)
         self.qnetwork_local = QNetwork(state_size, action_size, self.seed).to(self.device)
@@ -43,7 +43,7 @@ class SACAgent():
         self.log_alpha = torch.zeros((1,), requires_grad=True, device=config["device"])
         self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=self.lr)
         self.alpha = self.log_alpha.detach().exp()
-        #self.alpha = 0.2
+        self.alpha = 0.0
         self.t_step = 0
         self.update_freq = config["update_freq"]
         self.vid_path = config["locexp"] + "/vid"
@@ -51,9 +51,10 @@ class SACAgent():
     
     def step(self, memory, writer):
         self.t_step += 1 
-        if self.t_step > 100:
+        if self.t_step > 1000:
             if self.t_step % self.update_freq == 0:
                 self.learn(memory, writer)
+    
     def act_dqn(self, state, eps=0):
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
         self.qnetwork_local.eval()
@@ -67,7 +68,7 @@ class SACAgent():
         else:
             return random.choice(np.arange(self.action_size))
     
-    def act(self, state):
+    def act(self, state, eps):
         """Returns actions for given state as per current policy.
         
         Params
@@ -83,7 +84,12 @@ class SACAgent():
         action_pd = self.get_policy(logits)
         log_probs, action = self.calc_log_prob_action(action_pd)
         #print(next_actions)
-        return action.item()
+        if random.random() > eps:
+            return action.item()
+        else:
+            return random.choice(np.arange(self.action_size))
+
+    
     def guard_actions(self, actions):
         actions = F.one_hot(actions.long(), self.action_size).float()
         return actions
@@ -154,7 +160,8 @@ class SACAgent():
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
         writer.add_scalar('loss/policy', policy_loss, self.t_step)
         self.optimizer_actor.step()
-         
+        self.soft_update(self.qnetwork_local, self.qnetwork_target, self.tau)
+        return  
         # -----------------------entropy-loss------------------------------------------------------------
         entropy_loss = -torch.mean(self.log_alpha * (log_probs.detach() + self.target_entropy))
         self.alpha_optimizer.zero_grad()
