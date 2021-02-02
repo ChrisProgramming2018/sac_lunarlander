@@ -1,14 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from torch.distributions import Categorical
 
 
-
-
-
-class QNetwork(nn.Module):
+class RQNetwork(nn.Module):
     """Critic Q-funct Model."""
 
     def __init__(self, state_size, action_size, seed, fc1_units=64, fc2_units=64):
@@ -51,7 +47,7 @@ class QNetwork(nn.Module):
         return x1
 
 
-class RQNetwork(nn.Module):
+class QNetwork(nn.Module):
     """Critic Q-func Model."""
 
     def __init__(self, state_size, action_size, seed, fc1_units=64, fc2_units=64, fc3_units=32):
@@ -98,7 +94,7 @@ class RQNetwork(nn.Module):
         x1 = self.fc4(x1)
         return x1
 
-class Actor(nn.Module):
+class RActor(nn.Module):
     """Actor (Policy) Model."""
 
     def __init__(self, state_size, action_size, seed, clip, fc1_units=64, fc2_units=64):
@@ -125,7 +121,7 @@ class Actor(nn.Module):
         return logits
 
 
-class OActor(nn.Module):
+class Actor(nn.Module):
     """Actor (Policy) Model."""
 
     def __init__(self, state_size, action_size, seed, clip, fc1_units=64, fc2_units=64, fc3_units=32):

@@ -33,8 +33,12 @@ class SACAgent():
         self.tau = config['tau']
         print("seed", self.seed)
         # Q-Network
+        torch.manual_seed(self.seed)
+        np.random.seed(seed=self.seed)
+        random.seed(self.seed)
         self.target_entropy = config["target_entropy"]
-        self.target_entropy = 1.358
+        # self.target_entropy = 1.358
+        self.target_entropy = -4  # 1.358 
         self.actor = Actor(state_size, action_size, self.seed, config["clip"]).to(self.device)
         self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=self.lr)
         self.qnetwork_local = QNetwork(state_size, action_size, self.seed).to(self.device)
@@ -98,44 +102,17 @@ class SACAgent():
         states, actions, rewards, next_states, dones = memory.sample(self.batch_size)
         with torch.no_grad():
             logits_next = self.actor(next_states)
-            #print(logits_next.shape)
             action_pd = self.get_policy(logits_next)
             log_probs_next, next_actions = self.calc_log_prob_action(action_pd)
-            #print("next_actions")
-            #print(next_actions)
             next_actions = self.guard_actions(next_actions)
-            #print(next_actions.shape)
             qn1, qn2 = self.qnetwork_target(next_states, next_actions)
-            #print(q_values_next)
-            #print(q_values_next.shape)
             Q_targets = torch.min(qn1, qn2)
             
-            #print(log_probs_next.shape)
-            #print("action prob ", action_prob_next)
-            #print(log_probs_next)
-            # print(Q_targets)
-            #print("action prob log ", log_probs_next.shape)
-            #print(Q_targets.shape)
-            # Q_targets = (( Q_targets - self.alpha * log_probs_next.unsqueeze(1))).sum(dim=1, keepdim=True)
             Q_targets = (Q_targets - self.alpha * log_probs_next.unsqueeze(1))
-            #print(Q_targets)
-            #print(Q_targets.shape)
-            #print(dones)
             Q_targets_next = rewards + (self.gamma * Q_targets * dones)
-            #print(Q_targets)
-            #print(Q_targets_next.shape)
             
-            #------------------------- dqn ------------------------------------------------------
-            """
-            Q_targets_next1, Q_targets_next2 = self.qnetwork_target(next_states)
-            Q_targets1 = Q_targets_next1.max(1)[0].unsqueeze(1).detach()
-            Q_targets2 = Q_targets_next2.max(1)[0].unsqueeze(1).detach()
-            Q_targets = torch.min(Q_targets1, Q_targets2)
-            Q_targets_next = rewards + (self.gamma * Q_targets * dones)
-           """
         actions = self.guard_actions(actions.squeeze(1))
         pred_q1, pred_q2 = self.qnetwork_local(states, actions)
-        #print("a", actions.shape)
         q_loss = F.mse_loss(Q_targets_next, pred_q1) +  F.mse_loss(Q_targets_next, pred_q2) 
         # -----------------------update-q-network------------------------------------------------------------
         self.optimizer.zero_grad()
@@ -161,14 +138,13 @@ class SACAgent():
         writer.add_scalar('loss/policy', policy_loss, self.t_step)
         self.optimizer_actor.step()
         self.soft_update(self.qnetwork_local, self.qnetwork_target, self.tau)
-        return  
         # -----------------------entropy-loss------------------------------------------------------------
-        entropy_loss = -torch.mean(self.log_alpha * (log_probs.detach() + self.target_entropy))
+        entropy_loss = -(self.log_alpha * (log_probs.detach() + self.target_entropy)).mean()
         self.alpha_optimizer.zero_grad()
         entropy_loss.backward()
         writer.add_scalar('loss/alpha', entropy_loss, self.t_step)
         self.alpha_optimizer.step()
-        self.alpha = self.log_alpha.exp()
+        self.alpha = self.log_alpha.detach().exp()
         writer.add_scalar('alpha', self.alpha, self.t_step)
         self.soft_update(self.qnetwork_local, self.qnetwork_target, self.tau)
 
